@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
 
+
   :root {
     --bg: #0d1117; --card: #161b22; --border: #30363d;
     --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
@@ -75,800 +76,152 @@
   .toc a { color: var(--accent); }
   .toc h3 { color: var(--muted); font-size: 0.9rem; margin-bottom: 0.5rem; }
 
-</style>
 
+</style>
 </head>
 <body>
-<p><h1>Архитектура агентов Veai на базе MCP + A2A</h1></p>
-
-<p><blockquote>*«У каждой проблемы есть решение, которое простое, изящное и неправильное.»* — Х. Л. Менкен</blockquote></p>
-<p>></p>
-<p><blockquote>Когда вы добавляете пятнадцатого агента в команду, простые решения перестают работать. Эта статья — о том, как превратить хаос мультиагентной координации в воспроизводимый процесс, не изобретая велосипед.</blockquote></p>
-
+<h1>Как подружить 15 AI-агентов и не сойти с ума</h1>
+<blockquote><em>«У каждой проблемы есть решение, которое простое, изящное и неправильное.»</em> — Х. Л. Менкен</blockquote>
+<p>Вы добавили пятого агента в команду — и всё сломалось. Десятого — сломалось снова. К пятнадцатому приходит понимание: проблема не в моделях, не в промптах, не в людях. Проблема — в процессе.</p>
+<p>Мы прошли этот путь. 15 AI-агентов — разработчики, тестировщики, девопсы, аналитики, — которые должны были работать как команда, а работали как толпа. Задачи терялись, артефакты исчезали, «готово» означало «я нажал кнопку», а не «оно работает».</p>
+<p>Эта статья — о том, как мы превратили хаос в процесс, какие протоколы и паттерны реально работают, а какие — красивые слайды без реализации.</p>
 <hr>
-
-<p><h2>1. Проблема</h2></p>
-
-<p>SDLC формализован в документации процесса + bash-скрипты (CLI-скрипты управления бордом, скрипт верификации, gatekeeper в CLI-скриптах управления бордом). Это самодельное решение с рядом проблем:</p>
-
-<ul>
-<li><strong>Gatekeeper на bash</strong> — скрипт-«сторож», который проверял, можно ли перевести задачу на следующий этап. Был написан на bash: цепочка <code>if/then</code> с вызовами <code>gh api</code> и проверкой полей. Bash прекрасен для склеивания команд в пайплайн, но не для бизнес-логики: нет типизации (строка вместо числа — и скрипт молча пропускает ошибку), сложно обрабатывать нестандартные ситуации, а каждое новое правило — это ещё один вложенный <code>if</code>. Когда процесс меняется, bash-скрипт ломается — и никто не замечает, пока не поздно.</li>
-
-<ul>
-<li><strong>Верификаторы на grep/python</strong> — проверки качества, которые искали текстовые признаки вместо проверки архитектурных контрактов. Пример: верификатор grep'ал код в поисках строки <code>TODO</code> — и радостно отмечал проблему, если находил. Но если вся архитектура нарушена (модуль А зависит от модуля Б, который зависит от модуля А), верификатор ничего не замечал: строки-то правильные, а круговая зависимость grep'ом не ловится. Проблема не в самом grep — проблема в подходе: проверяют текст, а не контракты.</li>
-
-<ul>
-<li><strong>Контекст между агентами</strong> — теряется, агенты не знают что предыдущий сделал</li>
-
-<ul>
-<li><strong>Нет стандартизации</strong> — каждый агент имплементирует свою логику перехода</li>
-
-<ul>
-<li><strong>Фантомный Done</strong> — задача помечена как выполненная, но артефакта нет. Почему? Системе неоткуда проверить, что артефакт действительно существует и соответствует критериям приёмки. Верификатор не проверял контракты, gatekeeper пропускал — и вот задача в «Done», а результата нет. Читатель бэклога видит «Done», а заказчик — дыру.</li>
-
-<p>Мультиагентный хаос — это не проблема людей и не проблема моделей. Это проблема <strong>процесса</strong>. Пятнадцать агентов без формализованного процесса — как пятнадцать программистов без Agile: каждый делает что-то полезное, но вместе они делают хаос. Причём агенты применяются не только для разработки — продажи, саппорт, аналитика, маркетинг: любой повторяющийся процесс с фазами и артефактами подвержен той же проблеме. SDLC (Software Development Life Cycle) — это не только про код. Это общая идея: процесс состоит из фаз, переход между фазами требует артефактов, а артефакты нужно проверять. Фазы продаж (лид → квалификация → предложение → сделка) отличаются от фаз разработки (requirements → design → implementation → QA → deploy), но принцип тот же: нет артефакта — нет перехода. Индустрия уже стандартизировала протоколы для формализации таких процессов. Попытка написать HTTP своими руками избыточна.</p>
-
-<p><figure><img src="https://imgs.xkcd.com/comics/automation.png" alt="Автоматизация процессов — никогда не знаешь, насколько всё хрупко" style="max-width:100%;border-radius:8px;margin:1rem 0;"><figcaption>Автоматизация процессов — никогда не знаешь, насколько всё хрупко</figcaption></figure></p>
-<p>*Источник: xkcd #1319 «Automation» (CC BY-NC 2.5)*</p>
-
-<p><h2>2. Протоколы</h2></p>
-
-<p><h3>2.1 MCP (Model Context Protocol) — Anthropic</h3></p>
-
-<p><strong>Назначение:</strong> Агент ↔ Инструменты/Данные</p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐⭐⭐ — самый зрелый протокол. Официальные SDK (Python, TypeScript). Широкая индустриальная поддержка.</p>
-
-<p><strong>Ключевые концепции:</strong></p>
+<h2>1. Как всё сломалось</h2>
+<p>Начиналось классически. Один агент — ChatGPT с плагинами — делал всё сам: планировал, писал код, тестировал, деплоил. Работало, пока задач было пять.</p>
+<p>Потом появился второй агент — фронтендер. Потом третий — девопс. К десятому стало ясно: каждый агент живёт в своём мире. Контекст теряется на каждом переходе. Бэкендер написал API — фронтендер не знает какое. Тестировщик проверил старую версию. Девопс задеплоил то, что никто не ревьюил.</p>
+<p>Но главная проблема была не в коммуникации. Она была в <strong>процессе</strong>.</p>
+<h3>Фантомный Done</h3>
+<p>Мы обнаружили, что задачи помечались как выполненные, но артефактов не было. Задача «Реализовать авторизацию» — статус Done. Работающей авторизации — нет. Как так? Системе неоткуда проверить, что результат существует и соответствует критериям.</p>
+<h3>Gatekeeper на bash</h3>
+<p>Мы написали «сторожа» — bash-скрипт, который проверял, можно ли перевести задачу на следующий этап. Цепочка <code>if/then</code> с вызовами GitHub API и проверкой полей. Bash прекрасен для склеивания команд, но не для бизнес-логики: нет типизации, сложно обрабатывать нестандартные ситуации, каждое новое правило — ещё один вложенный <code>if</code>. Процесс меняется — скрипт ломается, и никто не замечает.</p>
+<h3>Верификаторы без зубов</h3>
+<p>Проверки качества искали текстовые признаки вместо архитектурных контрактов. Верификатор искал строку <code>TODO</code> в коде — и находил. Но если вся архитектура нарушена (модуль А зависит от Б, Б зависит от А) — верификатор ничего не замечал. Строки-то правильные.</p>
+<p><strong>Вывод:</strong> пятнадцать агентов без формализованного процесса — как пятнадцать программистов без методологии. Каждый делает что-то полезное, но вместе — хаос. И это не только про разработку: продажи, саппорт, аналитика — любой процесс с фазами и артефактами подвержен той же проблеме.</p>
+<figure><img src="https://imgs.xkcd.com/comics/automation.png" alt="Автоматизация — никогда не знаешь, насколько всё хрупко" style="max-width:100%;border-radius:8px;"><figcaption style="color:var(--muted);font-size:0.82rem;margin-top:0.3rem;">Источник: xkcd #1319 «Automation» (CC BY-NC 2.5)</figcaption></figure>
+<hr>
+<h2>2. Что уже есть: протоколы</h2>
+<p>Прежде чем писать свой велосипед, стоит посмотреть что уже существует. Индустрия стандартизировала несколько протоколов для взаимодействия агентов — и они решают ровно те проблемы, с которыми мы столкнулись.</p>
+<h3>MCP (Model Context Protocol) — Anthropic</h3>
+<p><strong>Зачем:</strong> Агент ↔ Инструменты и данные</p>
+<p>MCP — самый зрелый протокол в пространстве. Официальные SDK для Python и TypeScript, широкая поддержка. Определяет три сущности:</p>
 <ul>
 <li><strong>Tools</strong> — действия, которые агент может вызвать (создать issue, обновить борд)</li>
-<ul>
 <li><strong>Resources</strong> — данные, которые агент может читать (файлы, API-ответы)</li>
-<ul>
 <li><strong>Prompts</strong> — шаблоны поведения</li>
-
-<p><strong>Что покрывает для нас:</strong></p>
+</ul>
+<p>Для нас MCP заменяет самодельные CLI-скрипты для работы с GitHub. Вместо bash-цепочек с <code>gh api graphql</code> — типизированные инструменты с контрактом. Официальный GitHub MCP Server уже умеет CRUD issues, Projects V2, PR и Actions.</p>
+<p><strong>Минус:</strong> ~150K токенов на загрузку всех tool definitions. Решение — загружать только нужные.</p>
+<h3>A2A (Agent-to-Agent) — Google → Linux Foundation</h3>
+<p><strong>Зачем:</strong> Агент ↔ Агент</p>
+<p>A2A решает проблему передачи работы между агентами. Ключевые концепции:</p>
 <ul>
-<li>GitHub MCP Server (официальный) — CRUD issues, Projects V2, PR, Actions</li>
-<ul>
-<li>Заменяет: CLI-скрипты управления бордом,</li>
-<ul>
-<li>Заменяет: прямые <code>gh api graphql</code> вызовы</li>
-<ul>
-<li>Заменяет: кэш <code>локальный кэш</code> (MCP server управляет кэшированием)</li>
-
-<p><strong>Token-затраты:</strong> ~150K токенов на загрузку всех tool definitions (по данным Anthropic). Решение: загружать только нужные toolset-ы.</p>
-
-<p><h3>2.2 A2A (Agent-to-Agent) — Google → Linux Foundation</h3></p>
-
-<p><strong>Назначение:</strong> Агент ↔ Агент</p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐ — спецификация стабильна, референс-имплементации есть, но экосистема молодая.</p>
-
-<p><strong>Ключевые концепции:</strong></p>
-<ul>
-<li><strong>Agent Card</strong> — JSON-описание возможностей агента (навыки, протоколы,端点)</li>
-<ul>
+<li><strong>Agent Card</strong> — JSON-описание возможностей агента (навыки, протоколы, endpoint)</li>
 <li><strong>Task</strong> — единица работы, передаваемая между агентами</li>
-<ul>
 <li><strong>Message</strong> — коммуникация внутри Task (артефакты, статус, вопросы)</li>
-<ul>
-<li><strong>Push Notifications</strong> — асинхронные уведомления о завершении</li>
-
-<p><strong>Что покрывает для нас:</strong></p>
-<ul>
-<li>Передача артефактов между фазами SDLC (Planning → Design → Implementation → ...)</li>
-<ul>
-<li>Контракты: обязательные поля в Task payload = gatekeeper без bash</li>
-<ul>
-<li>Оркестрация: оркестратор как client agent, команда как remote agents</li>
-<ul>
-<li>Заменяет: gatekeeper в CLI-скрипты управления бордом (проверка обязательных полей до передачи)</li>
-<ul>
-<li>Заменяет: систему событий OpenClaw (частично)</li>
-
+</ul>
+<p>Для нас A2A заменяет bash-gatekeeper: обязательные поля в Task payload = формальный контракт на переход между фазами. Оркестратор передаёт задачу дизайнеру — и в payload обязательно есть требования. Нет требований — задача не принимается. Это gatekeeper без строчки кода.</p>
 <p><strong>Коммуникация:</strong> JSON-RPC over HTTP/SSE — стандартные веб-технологии.</p>
-
-<p><h3>2.3 ACP (Agent Communication Protocol) — IBM → Linux Foundation</h3></p>
-
-<p><strong>Статус:</strong> ⚠️ ACP официально влился в A2A. Не отдельный протокол.</p>
-
-<p>ACP был REST-based альтернативой A2A (без JSON-RPC, проще). Сейчас его концепции интегрированы в A2A. Отдельно реализовывать нет смысла.</p>
-
-<p><h3>2.4 AGP (Agent Gateway Protocol) — Cisco/agntcy</h3></p>
-
-<p><strong>Назначение:</strong> Иерархическая маршрутизация между агентами (надстройка над A2A)</p>
-
-<p><strong>Зрелость:</strong> ⭐⭐ — спецификация draft, референс-имплементация минимальная</p>
-
-<p><strong>Применение:</strong> Пока рано. AGP решает проблему масштабирования (тысячи агентов, межорганизационное взаимодействие). 15 агентов — A2A достаточно.</p>
-
-<p><strong>На будущее:</strong> Если Veai Control (система мониторинга агентов) будет мониторить агенты разных организаций — AGP станет актуален.</p>
-
-<p><h3>Сравнение протоколов — визуальная схема</h3></p>
-
-<p><div class="mermaid"></p>
-<p>flowchart TD</p>
-<p>subgraph Protocols["Протоколы агентов — обзор"]</p>
-<p>MCP[MCP<br/>Model Context Protocol<br/>Anthropic<br/>⭐⭐⭐⭐⭐] --> MCP_Use[Инструменты & Данные<br/>Агент → GitHub, ФС]</p>
-<p>A2A[A2A<br/>Agent-to-Agent<br/>Google → LF<br/>⭐⭐⭐] --> A2A_Use[Агент ↔ Агент<br/>Task Delegation]</p>
-<p>ACP[ACP<br/>IBM → LF<br/>⚰️] --> ACP_Fate[Влился в A2A]</p>
-<p>AGP[AGP<br/>Cisco/agntcy<br/>⭐⭐] --> AGP_Use[Межорганизационная<br/>маршрутизация]</p>
-<p>end</p>
-<p>MCP_Use --> IR1[оркестратор → GitHub MCP]</p>
-<p>A2A_Use --> IR2[Оркестратор → Команда]</p>
-<p>AGP_Use --> Future[На будущее]</p>
-
-<p></div></p>
-
-<p><h2>3. Архитектуры взаимодействия — сравнение паттернов</h2></p>
-
-<p>Прежде чем выбирать протоколы, нужно понять <strong>как</strong> агенты координируются. Архитектура взаимодействия — это паттерн, определяющий кто кому говорит, когда и что. От выбора паттерна зависит всё остальное.</p>
-
-<p><h3>3.1 Monolithic — один агент делает всё</h3></p>
-
-<p><pre><code class="">┌──────────────────────────────┐</p>
-<p>│         Мега-агент          │</p>
-<p>│  планирует + пишет + тести  │</p>
-<p>│  рулит + деплоит + пишет    │</p>
-<p>└──────────────────────────────┘</p>
-<p></code></pre></p>
-
-<p><strong>Как работает:</strong> Одна LLM-сессия получает задачу и выполняет все шаги сама — от анализа до деплоя. Контекст один, память одна, ошибок коммуникации нет.</p>
-
-<p><strong>Плюсы:</strong> Простой. Нет проблем с передачей контекста. Нет оверхеда на координацию.</p>
-<p><strong>Минусы:</strong> Контекстное окно переполняется. Токены горят на каждый шаг. Ошибка на одном этапе ломает всё. Не масштабируется.</p>
-
-<p><strong>Когда подходит:</strong> Прототипы, разовые задачи, simple scripts. ChatGPT с плагинами — типичный monolithic.</p>
-<p><strong>Когда нет:</strong> Любой процесс из 3+ фаз с разными ролями.</p>
-
-<p><h3>3.2 Orchestrator + Workers — менеджер + исполнители</h3></p>
-
-<p><pre><code class="">        ┌─────────────┐</p>
-<p>│  Оркестратор │</p>
-<p>└──┬──┬──┬──┬─┘</p>
-<p>│  │  │  │</p>
-<p>┌──┘  │  │  └──┐</p>
-<p>▼     ▼  ▼     ▼</p>
-<p>[backend-разработчик][frontend-разработчик][DevOps-инженер][QA-инженер]</p>
-<p></code></pre></p>
-
-<p><strong>Как работает:</strong> Центральный агент (менеджер) получает задачу, разбивает, делегирует исполнителям, собирает результаты, проверяет.</p>
-
-<p><strong>Плюсы:</strong> Чёткая ответственность. Контекст изолирован. Можно менять исполнителей.</p>
-<p><strong>Минусы:</strong> Оркестратор — SPOF. Токены тратятся на координацию, не на работу. Если менеджер «засыпает» — всё стоит.</p>
-
-<p><strong>Когда подходит:</strong> Команды с ролями, SDLC-процессы. оркестратор + исполнители (пример: OpenClaw).</p>
-<p><strong>Когда нет:</strong> Когда менеджер не справляется с потоком ( >10 одновременных задач).</p>
-
-<p><h3>3.3 Pipeline/Chain — последовательная передача</h3></p>
-
-<p><pre><code class="">[BA] → [Дизайнер] → [Разработчик] → [QA] → [Деплой]</p>
-<p>│        │            │          │        │</p>
-<p>▼        ▼            ▼          ▼        ▼</p>
-<p>reqs    design       code      verdict  release</p>
-<p></code></pre></p>
-
-<p><strong>Как работает:</strong> Агенты выстроены в цепочку. Выход одного = вход следующего. Никто не прыгает через этап.</p>
-
-<p><strong>Плюсы:</strong> Предсказуемый порядок. Легко аудировать. Естественное соответствие SDLC.</p>
-<p><strong>Минусы:</strong> Нет параллелизма. Если один агент застрял — весь конвейер стоит. Нет ветвления.</p>
-
-<p><strong>Когда подходит:</strong> Линейные процессы (SDLC). LangChain Chains — типичный pipeline.</p>
-<p><strong>Когда нет:</strong> Когда задачи требуют параллельной работы или условного ветвления.</p>
-
-<p><h3>3.4 Event-driven — реакция на события</h3></p>
-
-<p><pre><code class="">  [GitHub webhook] ──→ [Агент-обработчик]</p>
-<p>[Крон heartbeat] ──→ [Агент-проверщик]</p>
-<p>[PR создан]     ──→ [Агент-ревьюер]</p>
-<p></code></pre></p>
-
-<p><strong>Как работает:</strong> Агенты не вызываются напрямую — они подписаны на события и реагируют когда что-то происходит.</p>
-
-<p><strong>Плюсы:</strong> Слабая связанность. Легко добавлять новых слушателей. Работает асинхронно.</p>
-<p><strong>Минусы:</strong> Сложно отладить (кто на что подписан?). Нет гарантии порядка. События могут теряться.</p>
-
-<p><strong>Когда подходит:</strong> Мониторинг, алерты, реактивные проверки. cron-задачи (пример: OpenClaw) — event-driven.</p>
-<p><strong>Когда нет:</strong> Когда важен строгий порядок и гарантии доставки.</p>
-
-<p><h3>3.5 Swarm/Mesh — децентрализованная координация</h3></p>
-
-<p><pre><code class="">     [Агент A] ⇄ [Агент B]</p>
-<p>⇕           ⇕</p>
-<p>[Агент C] ⇄ [Агент D]</p>
-<p></code></pre></p>
-
-<p><strong>Как работает:</strong> Агенты общаются друг с другом напрямую. Нет единого оркестратора. Решения принимаются коллективно.</p>
-
-<p><strong>Плюсы:</strong> Нет SPOF. Устойчив к сбоям. Агенты адаптируются.</p>
-<p><strong>Минусы:</strong> Непредсказуемость. Токены тратятся на «обсуждение». Может зациклиться. Нет гарантии результата.</p>
-
-<p><strong>Когда подходит:</strong> Brainstorming, exploration, research. AutoGen group chat — swarm.</p>
-<p><strong>Когда нет:</strong> Продакшн-процессы с жёсткими правилами. Команда Forge — точно нет.</p>
-
-<p><h3>3.6 Hierarchical — дерево оркестраторов</h3></p>
-
-<p><pre><code class="">           [Главный менеджер]</p>
-<p>┌──────┴──────┐</p>
-<p>[Отряд A]      [Отряд B]</p>
-<p>┌──┴──┐        ┌──┴──┐</p>
-<p>[А1] [А2]     [B1] [B2]</p>
-<p></code></pre></p>
-
-<p><strong>Как работает:</strong> Менеджеры делегируют подменеджерам, те — исполнителям. Иерархия как в компании.</p>
-
-<p><strong>Плюсы:</strong> Масштабируется. Каждый уровень управляет своей областью. Чёткие зоны ответственности.</p>
-<p><strong>Минусы:</strong> Задержка на каждом уровне. Токены тратятся на коммуникацию между уровнями. Сложно координировать кросс-отрядные задачи.</p>
-
-<p><strong>Когда подходит:</strong> Большие команды ( >10 агентов) с разными доменами. CrewAI с менеджерами — hierarchical.</p>
-<p><strong>Когда нет:</strong> Маленькие команды, кросс-функциональные задачи.</p>
-
-<p><h3>3.7 State Machine / Workflow — формальный FSM</h3></p>
-
-<p><pre><code class="">Backlog → Requirements → Design → Implementation → Review → QA → Deploy → Done</p>
-<p>│         │            │          │             │       │      │</p>
-<p>└──[gate]─┘──[gate]───┘──[gate]──┘──[gate]────┘──[gate]─┘──[gate]─→ Done</p>
-<p></code></pre></p>
-
-<p><strong>Как работает:</strong> Процесс описан как конечный автомат. Переходы между состояниями — детерминистические. Guards (условия перехода) — код, не LLM.</p>
-
-<p><strong>Плюсы:</strong> 100% воспроизводимость. Ноль токенов на оркестрацию. Невозможно нарушить процесс. Легко тестировать.</p>
-<p><strong>Минусы:</strong> Жёсткость — нельзя «подправить на ходу». Требует upfront-проектирования. Не подходит для творческих задач.</p>
-
-<p><strong>Когда подходит:</strong> SDLC, compliance, продакшн-процессы. LangGraph, Temporal — state machines.</p>
-<p><strong>Когда нет:</strong> Исследования, брейнштормы, задачи без чёткого процесса.</p>
-
-<p><h3>Визуальное сравнение паттернов</h3></p>
-
-<p><div class="mermaid"></p>
-<p>flowchart TD</p>
-<p>subgraph Mono["Monolithic — один агент"]</p>
-<p>A1[Мега-агент]</p>
-<p>end</p>
-<p>subgraph Orch["Orchestrator + Workers"]</p>
-<p>O[Оркестратор] --> W1[Worker 1]</p>
-<p>O --> W2[Worker 2]</p>
-<p>O --> W3[Worker 3]</p>
-<p>end</p>
-<p>subgraph Pipe["Pipeline / Chain"]</p>
-<p>S1[Step 1] --> S2[Step 2] --> S3[Step 3] --> S4[Step 4]</p>
-<p>end</p>
-<p>subgraph Event["Event-driven"]</p>
-<p>EV[Событие] --> H1[Handler 1]</p>
-<p>EV --> H2[Handler 2]</p>
-<p>end</p>
-<p>subgraph SM["State Machine / Workflow ✅"]</p>
-<p>St1[Backlog] -- gate --> St2[Design] -- gate --> St3[Code] -- gate --> St4[Done]</p>
-<p>end</p>
-
-<p></div></p>
-
-<p><h3>Сравнительная таблица</h3></p>
-
+<h3>ACP (Agent Communication Protocol) — IBM → Linux Foundation</h3>
+<p>ACP был REST-based альтернативой A2A. <strong>Сейчас официально влился в A2A</strong> — отдельного протокола больше нет, его концепции интегрированы.</p>
+<h3>AGP (Agent Gateway Protocol) — Cisco/agntcy</h3>
+<p>Иерархическая маршрутизация между агентами — надстройка над A2A для масштабирования на тысячи агентов и межорганизационное взаимодействие. Спецификация draft, референс-имплементация минимальная. 15 агентов — A2A достаточно. На будущее, если понадобится мониторинг агентов разных организаций.</p>
+<hr>
+<h2>3. Как организовать команду: паттерны взаимодействия</h2>
+<p>Протоколы — это транспорт. Но кто кому говорит, когда и что — это паттерн. От выбора паттерна зависит всё.</p>
+<h3>Monolithic — один агент делает всё</h3>
+<p>Один агент получает задачу и выполняет все шаги сам. Просто, но контекстное окно переполняется, токены горят, ошибка на одном этапе ломает всё. Подходит для прототипов и разовых задач. Не масштабируется.</p>
+<h3>Orchestrator + Workers — менеджер + исполнители</h3>
+<p>Центральный агент разбивает задачу, делегирует, собирает результаты. Чёткая ответственность, но оркестратор — единая точка отказа. Если менеджер «засыпает» — всё стоит.</p>
+<h3>Pipeline — последовательная передача</h3>
+<p>Агенты выстроены в цепочку: выход одного = вход следующего. Предсказуемо, соответствует SDLC, но нет параллелизма. Один застрял — весь конвейер стоит.</p>
+<h3>Event-driven — реакция на события</h3>
+<p>Агенты подписаны на события и реагируют асинхронно. Слабая связанность, но сложно отладить, нет гарантии порядка.</p>
+<h3>Swarm/Mesh — децентрализованная координация</h3>
+<p>Агенты общаются напрямую, без оркестратора. Нет единой точки отказа, но непредсказуемо, токены тратятся на «обсуждение», может зациклиться.</p>
+<h3>State Machine / Workflow — формальный автомат</h3>
+<p>Процесс описан как конечный автомат. Переходы — детерминистические guards (код, не LLM). 100% воспроизводимость, ноль токенов на оркестрацию, невозможно нарушить процесс. Но жёсткость — нельзя «подправить на ходу».</p>
+<h3>Что выбрать</h3>
+<p>Для SDLC и продакшн-процессов — <strong>State Machine для переходов</strong> (детерминистические guards) + <strong>Orchestrator+Workers для исполнения</strong> (менеджер делегирует агентам). Pipeline не даёт параллелизма, Swarm — хаос, Monolithic — не масштабируется.</p>
 <table>
-<thead><tr><th>Паттерн</th><th>Токены на координацию</th><th>Воспроизводимость</th><th>Масштабируемость</th><th>Сложность внедрения</th></tr></thead>
+<thead><tr><th>Паттерн</th><th>Токены на координацию</th><th>Воспроизводимость</th><th>Масштаб</th></tr></thead>
 <tbody>
-<tr><td>Monolithic</td><td>Высокие</td><td>Низкая</td><td>Нет</td><td>Низкая</td></tr>
-<tr><td>Orchestrator+Workers</td><td>Высокие</td><td>Средняя</td><td>Средняя</td><td>Средняя</td></tr>
-<tr><td>Pipeline</td><td>Средние</td><td>Высокая</td><td>Нет</td><td>Низкая</td></tr>
-<tr><td>Event-driven</td><td>Низкие</td><td>Низкая</td><td>Высокая</td><td>Средняя</td></tr>
-<tr><td>Swarm/Mesh</td><td>Очень высокие</td><td>Очень низкая</td><td>Высокая</td><td>Низкая</td></tr>
-<tr><td>Hierarchical</td><td>Высокие</td><td>Средняя</td><td>Высокая</td><td>Высокая</td></tr>
-<tr><td><strong>State Machine</strong></td><td><strong>Нулевые</strong></td><td><strong>100%</strong></td><td><strong>Средняя</strong></td><td><strong>Средняя</strong></td></tr>
+<tr><td>Monolithic</td><td>Высокие</td><td>Низкая</td><td>Нет</td></tr>
+<tr><td>Orchestrator+Workers</td><td>Высокие</td><td>Средняя</td><td>Средняя</td></tr>
+<tr><td>Pipeline</td><td>Средние</td><td>Высокая</td><td>Нет</td></tr>
+<tr><td>Event-driven</td><td>Низкие</td><td>Низкая</td><td>Высокая</td></tr>
+<tr><td>Swarm</td><td>Очень высокие</td><td>Очень низкая</td><td>Высокая</td></tr>
+<tr><td><strong>State Machine</strong></td><td><strong>Нулевые</strong></td><td><strong>100%</strong></td><td><strong>Средняя</strong></td></tr>
 </tbody></table>
-
-<p><h3>Вывод для Forge</h3></p>
-
-<p>Рекомендуется <strong>State Machine</strong> для оркестрации (переходы между фазами — детерминистические guards) + <strong>Orchestrator+Workers</strong> для исполнения (менеджер делегирует агентам). Pipeline не даёт параллелизма. Swarm — хаос. Monolithic — не масштабируется.</p>
-
-<p>Именно эту комбинацию описывается дальше.</p>
-
-<p><figure><img src="https://imgs.xkcd.com/comics/automation.png" alt="Автоматизация процессов — никогда не знаешь, насколько всё хрупко" style="max-width:100%;border-radius:8px;margin:1rem 0;"><figcaption>Автоматизация процессов — никогда не знаешь, насколько всё хрупко</figcaption></figure></p>
-<p>*Источник: xkcd #1319 «Automation» (CC BY-NC 2.5)*</p>
-
-<p><h2>4. Платформы и фреймворки — кто что поддерживает</h2></p>
-
-<p>Протоколы — это стандарты. Но кто их реализует? Ни одна платформа не даёт MCP + A2A + FSM из коробки.</p>
-
-<p><h3>4.1 OpenClaw</h3></p>
-
-<p><strong>Что:</strong> Open-source runtime для AI-агентов. Telegram-интерфейс, sessions_spawn, systemEvent, cron.</p>
-
-<p><strong>MCP:</strong> Нет нативной поддержки. Агенты вызывают инструменты через shell-команды.</p>
-<p><strong>A2A:</strong> Нет. Агенты могут общаться через sessions_send (proprietary transport).</p>
-<p><strong>FSM/Workflow:</strong> Нет. Процесс — в голове менеджера или в bash-скриптах.</p>
-
-<p><strong>Для чего подходит:</strong> Коммуникация (Telegram → агент → человек), спавн агентов, heartbeat-мониторинг.</p>
-<p><strong>Ограничения:</strong> Нет контрактования. Нет типизации. Процесс полностью на усмотрение LLM.</p>
-
-<p><h3>4.2 CrewAI</h3></p>
-
-<p><strong>Что:</strong> Python-фреймворк. Роли, задачи, процессы (sequential/hierarchical).</p>
-
-<p><strong>MCP:</strong> Через интеграцию с LangChain tools. Не нативно.</p>
-<p><strong>A2A:</strong> Нет.</p>
-<p><strong>FSM/Workflow:</strong> Процесс = sequential или hierarchical. Не формальный FSM.</p>
-
-<p><strong>Для чего подходит:</strong> Быстрое прототипирование мультиагентных команд. Research, writing, analysis.</p>
-<p><strong>Ограничения:</strong> Python-only. Нет persistence. Нет гарантий выполнения процесса.</p>
-
-<p><h3>4.3 AutoGen</h3></p>
-
-<p><strong>Что:</strong> Microsoft. Multi-agent conversation. Group chat.</p>
-
-<p><strong>MCP:</strong> Нет нативно.</p>
-<p><strong>A2A:</strong> Нет.</p>
-<p><strong>FSM/Workflow:</strong> Нет.</p>
-
-<p><strong>Для чего подходит:</strong> Исследования, brainstorming, диалоговые задачи.</p>
-<p><strong>Ограничения:</strong> Агенты болтают, а не работают. Нет enforcement. Нет persistence.</p>
-
-<p><h3>4.4 LangGraph</h3></p>
-
-<p><strong>Что:</strong> LangChain-экосистема. Направленный граф состояний. Conditional edges, cycles.</p>
-
-<p><strong>MCP:</strong> Через LangChain tool calling.</p>
-<p><strong>A2A:</strong> Нет.</p>
-<p><strong>FSM/Workflow:</strong> Да — это основная абстракция. Nodes = функции, edges = переходы.</p>
-
-<p><strong>Для чего подходит:</strong> Workflow с условиями, циклами, human-in-the-loop. SDLC как state graph.</p>
-<p><strong>Ограничения:</strong> Python-only. Привязка к LangChain. State в памяти (нужен checkpointer для persistence).</p>
-
-<p><h3>4.5 Dify</h3></p>
-
-<p><strong>Что:</strong> Визуальный workflow builder. Drag-and-drop, low-code.</p>
-
-<p><strong>MCP:</strong> Частично — через tool integration.</p>
-<p><strong>A2A:</strong> Нет.</p>
-<p><strong>FSM/Workflow:</strong> Визуальный граф. Условия, ветвления.</p>
-
-<p><strong>Для чего подходит:</strong> Быстрое прототипирование. Нетехнические пользователи. Простые workflows.</p>
-<p><strong>Ограничения:</strong> Ограниченная кастомизация. Vendor lock-in. Не для сложных процессов.</p>
-
-<p><h3>4.6 Semantic Kernel</h3></p>
-
-<p><strong>Что:</strong> Microsoft. Plugins, planners, memory.</p>
-
-<p><strong>MCP:</strong> Нативная поддержка MCP connectors.</p>
-<p><strong>A2A:</strong> Нет.</p>
-<p><strong>FSM/Workflow:</strong> Через Process Framework (preview).</p>
-
-<p><strong>Для чего подходит:</strong> Enterprise .NET/Python. Интеграция с Azure.</p>
-<p><strong>Ограничения:</strong> .NET-first. Heavy enterprise. Не для стартапов.</p>
-
-<p><h3>4.7 OpenAI Agents SDK</h3></p>
-
-<p><strong>Что:</strong> OpenAI. Handoffs, guardrails, tracing.</p>
-
-<p><strong>MCP:</strong> Да — нативная поддержка MCP servers.</p>
-<p><strong>A2A:</strong> Нет.</p>
-<p><strong>FSM/Workflow:</strong> Handoffs = упрощённая маршрутизация. Не формальный FSM.</p>
-
-<p><strong>Для чего подходит:</strong> OpenAI-экосистема. Быстрые агенты с guardrails.</p>
-<p><strong>Ограничения:</strong> OpenAI-only. Python. Нет persistence.</p>
-
-<p><h3>4.8 Google ADK</h3></p>
-
-<p><strong>Что:</strong> Google. Agent Development Kit. A2A — первый класс.</p>
-
-<p><strong>MCP:</strong> Через интеграцию.</p>
-<p><strong>A2A:</strong> Нативно — Agent Cards, Task delegation, artifacts.</p>
-<p><strong>FSM/Workflow:</strong> Частично — через A2A Task lifecycle.</p>
-
-<p><strong>Для чего подходит:</strong> Мультиагентные системы с контрактами. Будущий стек A2A.</p>
-<p><strong>Ограничения:</strong> Ранний stage. Python-only. Документация скудная.</p>
-
-<p><h3>4.9 Amazon Bedrock Agents</h3></p>
-
-<p><strong>Что:</strong> AWS. Action groups, knowledge bases, guardrails.</p>
-
-<p><strong>MCP:</strong> Нет.</p>
-<p><strong>A2A:</strong> Нет.</p>
-<p><strong>FSM/Workflow:</strong> Упрощённый — action groups как шаги.</p>
-
-<p><strong>Для чего подходит:</strong> AWS-экосистема. Enterprise compliance.</p>
-<p><strong>Ограничения:</strong> AWS lock-in. Ограниченная кастомизация. Дорого.</p>
-
-<p><h3>Визуальная карта платформ</h3></p>
-
-<p><div class="mermaid"></p>
-<p>quadrantChart</p>
-<p>title Платформы: MCP × A2A × FSM</p>
-<p>x-axis "MCP Support" --> "A2A Support"</p>
-<p>y-axis "FSM Support" --> "Ecosystem Maturity"</p>
-<p>quadrant-1 "Лидеры"</p>
-<p>quadrant-2 "FSM-ориентированные"</p>
-<p>quadrant-3 "Нишевые"</p>
-<p>quadrant-4 "Ранние"</p>
-<p>"OpenClaw": [0.1, 0.3]</p>
-<p>"CrewAI": [0.3, 0.5]</p>
-<p>"AutoGen": [0.05, 0.4]</p>
-<p>"LangGraph": [0.35, 0.85]</p>
-<p>"Dify": [0.4, 0.6]</p>
-<p>"Semantic Kernel": [0.85, 0.4]</p>
-<p>"OpenAI Agents SDK": [0.9, 0.5]</p>
-<p>"Google ADK": [0.5, 0.8]</p>
-<p>"Bedrock Agents": [0.05, 0.2]</p>
-
-<p></div></p>
-
-<p><h3>Сравнительная таблица</h3></p>
-
+<hr>
+<h2>4. Платформы: кто что поддерживает</h2>
+<p>Ни одна платформа не даёт MCP + A2A + FSM из коробки. Вот что есть:</p>
 <table>
-<thead><tr><th>Платформа</th><th>MCP</th><th>A2A</th><th>FSM</th><th>Persistence</th><th>Открытый исходный код</th></tr></thead>
+<thead><tr><th>Платформа</th><th>MCP</th><th>A2A</th><th>FSM/Workflow</th><th>Подходит для</th></tr></thead>
 <tbody>
-<tr><td>OpenClaw</td><td>❌</td><td>❌</td><td>❌</td><td>❌</td><td>✅ MIT</td></tr>
-<tr><td>CrewAI</td><td>⚠️</td><td>❌</td><td>⚠️</td><td>❌</td><td>✅ MIT</td></tr>
-<tr><td>AutoGen</td><td>❌</td><td>❌</td><td>❌</td><td>❌</td><td>✅ MIT</td></tr>
-<tr><td>LangGraph</td><td>⚠️</td><td>❌</td><td>✅</td><td>⚠️</td><td>✅ MIT</td></tr>
-<tr><td>Dify</td><td>⚠️</td><td>❌</td><td>⚠️</td><td>✅</td><td>⚠️ (open core)</td></tr>
-<tr><td>Semantic Kernel</td><td>✅</td><td>❌</td><td>⚠️</td><td>✅</td><td>✅ MIT</td></tr>
-<tr><td>OpenAI Agents SDK</td><td>✅</td><td>❌</td><td>⚠️</td><td>❌</td><td>✅ Apache 2.0</td></tr>
-<tr><td><strong>Google ADK</strong></td><td>⚠️</td><td><strong>✅</strong></td><td>⚠️</td><td>❌</td><td>✅ Apache 2.0</td></tr>
-<tr><td>Bedrock Agents</td><td>❌</td><td>❌</td><td>⚠️</td><td>✅</td><td>❌</td></tr>
+<tr><td><strong>OpenClaw</strong></td><td>Нет (shell)</td><td>Нет (proprietary sessions_send)</td><td>Нет</td><td>Коммуникация, Telegram-боты, мониторинг</td></tr>
+<tr><td><strong>CrewAI</strong></td><td>Через LangChain</td><td>Нет</td><td>Sequential/Hierarchical</td><td>Быстрое прототипирование</td></tr>
+<tr><td><strong>AutoGen</strong></td><td>Нет</td><td>Нет</td><td>Нет</td><td>Исследования, brainstorming</td></tr>
+<tr><td><strong>LangGraph</strong></td><td>Через LangChain</td><td>Нет</td><td><strong>Да</strong> — направленный граф</td><td>SDLC как state graph</td></tr>
+<tr><td><strong>Dify</strong></td><td>Частично</td><td>Нет</td><td>Визуальный граф</td><td>Нетехнические пользователи</td></tr>
+<tr><td><strong>Semantic Kernel</strong></td><td>Нативно</td><td>Нет</td><td>Preview</td><td>Enterprise .NET/Azure</td></tr>
+<tr><td><strong>OpenAI Agents SDK</strong></td><td>Нативно</td><td>Нет</td><td>Handoffs</td><td>Простые агенты OpenAI</td></tr>
 </tbody></table>
-
-<p><h3>Вывод</h3></p>
-
-<p>Ни одна платформа не покрывает все три слоя (MCP + A2A + FSM). Придётся компоновать: <strong>MCP</strong> — для инструментов, <strong>LangGraph или Temporal</strong> — для workflow, <strong>Google ADK</strong> — для A2A когда понадобится. OpenClaw остаётся слоем коммуникации (Telegram).</p>
-
-<p><h2>5. Библиотеки и инструменты реализации</h2></p>
-
-<p>Протоколы выбраны, платформы оценены. На чём писать код?</p>
-
-<p><h3>5.1 MCP SDK (Python / TypeScript)</h3></p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐⭐⭐ — официальный SDK от Anthropic. Стабильный, документированный.</p>
-
-<p><strong>Что даёт:</strong> Server и Client. JSON-RPC transport. Tool/Resource/Prompt registration. Stdio и SSE transport.</p>
-
-<p><strong>Когда применять:</strong> Любой MCP-сервер. GitHub MCP и SDLC MCP — на нём.</p>
-<p><strong>Когда НЕ применять:</strong> Если нужно агент-агент общение (это A2A, не MCP).</p>
-
-<p><h3>5.2 A2A SDK (Python / TypeScript)</h3></p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐ — референс-имплементация от Google. Работает, но документация минимальна.</p>
-
-<p><strong>Что даёт:</strong> Agent Card, Task, Message, Push Notification. JSON-RPC over HTTP/SSE.</p>
-
-<p><strong>Когда применять:</strong> Контракты между агентами. Task delegation с обязательными полями.</p>
-<p><strong>Когда НЕ применять:</strong> Если агентов <3 (overkill). Если транспорт уже есть (OpenClaw sessions).</p>
-
-<p><h3>5.3 LangGraph</h3></p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐⭐ — часть LangChain-экосистемы. Активно развивается.</p>
-
-<p><strong>Что даёт:</strong> State graph, conditional edges, cycles, human-in-the-loop, checkpointing (SQLite/Postgres).</p>
-
-<p><strong>Когда применять:</strong> Workflow с условиями и циклами. SDLC как граф. Human approval steps.</p>
-<p><strong>Когда НЕ применять:</strong> Когда нужен durable execution (при рестарте сервера workflow должен продолжиться). LangGraph checkpointing — не production-grade для этого.</p>
-
-<p><h3>5.4 Temporal</h3></p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐⭐⭐ — production-grade workflow engine. Используется в Netflix, Coinbase, Datadog.</p>
-
-<p><strong>Что даёт:</strong> Durable workflows (переживают рестарт сервера). Retries, timeouts, saga patterns. Go, TypeScript, Python SDK.</p>
-
-<p><strong>Когда применять:</strong> Продакшн-процессы, где потеря состояния = катастрофа. CI/CD pipelines. SLA enforcement.</p>
-<p><strong>Когда НЕ применять:</strong> Прототипы. Простые линейные процессы. Когда инфраструктура Temporal server — overhead.</p>
-
-<p><h3>5.5 n8n</h3></p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐⭐ — визуальный automation platform. 400+ интеграций.</p>
-
-<p><strong>Что даёт:</strong> Drag-and-drop workflow builder. Webhook triggers. HTTP requests. Code nodes.</p>
-
-<p><strong>Когда применять:</strong> Быстрое прототипирование интеграций. Нетехнические пользователи. Простые automation.</p>
-<p><strong>Когда НЕ применять:</strong> Сложная бизнес-логика. Продакшн-процессы с гарантиями. Когда нужен код, а не визуальный редактор.</p>
-
-<p><h3>5.6 Inngest</h3></p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐ — event-driven functions platform. TypeScript-first.</p>
-
-<p><strong>Что даёт:</strong> Event triggers, durable functions, retries, concurrency control.</p>
-
-<p><strong>Когда применять:</strong> Event-driven архитектуры. Serverless. Когда нужно реагировать на события.</p>
-<p><strong>Когда НЕ применять:</strong> Когда важен синхронный workflow. Когда нет TypeScript.</p>
-
-<p><h3>5.7 Custom JSON-RPC</h3></p>
-
-<p><strong>Зрелость:</strong> ⭐⭐⭐⭐⭐ — это не библиотека, это подход. Пишешь свой протокол поверх JSON-RPC.</p>
-
-<p><strong>Что даёт:</strong> Полный контроль. Минимальные зависимости. Можно реализовать за вечер.</p>
-
-<p><strong>Когда применять:</strong> Когда стандарты (MCP, A2A) — overhead. Когда нужно быстро. Когда команды 3-5 агентов.</p>
-<p><strong>Когда НЕ применять:</strong> Когда нужна совместимость с другими платформами. Когда есть готовый SDK.</p>
-
-<p><h3>Визуальная карта библиотек</h3></p>
-
-<p><div class="mermaid"></p>
-<p>quadrantChart</p>
-<p>title Библиотеки: Зрелость × Сложность</p>
-<p>x-axis "Порог входа (низкий)" --> "Порог входа (высокий)"</p>
-<p>y-axis "Зрелость (низкая)" --> "Зрелость (высокая)"</p>
-<p>quadrant-1 "Зрелые, высокий порог"</p>
-<p>quadrant-2 "Зрелые, низкий порог"</p>
-<p>quadrant-3 "Молодые, низкий порог"</p>
-<p>quadrant-4 "Молодые, высокий порог"</p>
-<p>"MCP SDK": [0.25, 0.95]</p>
-<p>"A2A SDK": [0.45, 0.5]</p>
-<p>"LangGraph": [0.5, 0.75]</p>
-<p>"Temporal": [0.85, 0.95]</p>
-<p>"n8n": [0.2, 0.75]</p>
-<p>"Inngest": [0.3, 0.5]</p>
-<p>"Custom JSON-RPC": [0.15, 0.95]</p>
-
-<p></div></p>
-
-<p><h3>Сравнительная таблица</h3></p>
-
-<table>
-<thead><tr><th>Инструмент</th><th>Зрелость</th><th>Язык</th><th>Durable</th><th>Порог входа</th><th>Когда выбирать</th></tr></thead>
-<tbody>
-<tr><td>MCP SDK</td><td>⭐⭐⭐⭐⭐</td><td>Python/TS</td><td>❌</td><td>Низкий</td><td>Инструментный слой</td></tr>
-<tr><td>A2A SDK</td><td>⭐⭐⭐</td><td>Python/TS</td><td>❌</td><td>Средний</td><td>Агент-агент контракты</td></tr>
-<tr><td>LangGraph</td><td>⭐⭐⭐⭐</td><td>Python</td><td>⚠️</td><td>Средний</td><td>Workflow с условиями</td></tr>
-<tr><td>Temporal</td><td>⭐⭐⭐⭐⭐</td><td>Go/TS/Py</td><td>✅</td><td>Высокий</td><td>Production durable workflows</td></tr>
-<tr><td>n8n</td><td>⭐⭐⭐⭐</td><td>Visual</td><td>✅</td><td>Низкий</td><td>Прототипирование</td></tr>
-<tr><td>Inngest</td><td>⭐⭐⭐</td><td>TypeScript</td><td>✅</td><td>Низкий</td><td>Event-driven</td></tr>
-<tr><td>Custom JSON-RPC</td><td>⭐⭐⭐⭐⭐</td><td>Любой</td><td>❌</td><td>Низкий</td><td>Когда стандарты избыточны</td></tr>
-</tbody></table>
-
-<p><h3>Вывод для Forge</h3></p>
-
-<p><strong>Короткий срок:</strong> MCP SDK (инструменты) + Custom JSON-RPC (простые контракты). Быстро, минимум зависимостей.</p>
-
-<p><strong>Средний срок:</strong> MCP SDK + LangGraph (workflow как state graph). Human-in-the-loop, conditional edges.</p>
-
-<p><strong>Долгий срок:</strong> MCP SDK + Temporal (durable workflows) + Google ADK (A2A). Production-grade, совместимость с индустрией.</p>
-
-<p><h2>6. Предлагаемая архитектура</h2></p>
-
-<p><h3>6.1 Принцип: Слоистая модель (Layered Protocol Strategy)</h3></p>
-
-<p><div class="mermaid"></p>
-<p>flowchart TB</p>
-<p>subgraph Orchestration["Слой оркестрации"]</p>
-<p>IR[оркестратор<br/>A2A Client]</p>
-<p>end</p>
-<p>subgraph Bus["Слой коммуникации — A2A Bus"]</p>
-<p>BUS[Task Delegation<br/>Artifact Handoff<br/>Contract Validation]</p>
-<p>end</p>
-<p>subgraph Agents["Слой агентов-исполнителей"]</p>
-<p>D[backend-разработчик<br/>A2A Agent]</p>
-<p>N[frontend-разработчик<br/>A2A Agent]</p>
-<p>K[DevOps-инженер<br/>A2A Agent]</p>
-<p>A[QA-инженер<br/>A2A Agent]</p>
-<p>end</p>
-<p>subgraph Tools["Слой инструментов — MCP"]</p>
-<p>GH[GitHub MCP Server<br/>Issues, Projects]</p>
-<p>FS[Filesystem MCP<br/>Файлы, репозиторий]</p>
-<p>SDLC[SDLC MCP Server<br/>Gates, Verify]</p>
-<p>end</p>
-
-<p>IR --> BUS</p>
-<p>BUS --> D</p>
-<p>BUS --> N</p>
-<p>BUS --> K</p>
-<p>BUS --> A</p>
-<p>D --> GH</p>
-<p>D --> FS</p>
-<p>D --> SDLC</p>
-<p>N --> GH</p>
-<p>K --> SDLC</p>
-<p>A --> SDLC</p>
-
-<p>style IR fill:#4F46E5,color:#fff,stroke:#3730A3</p>
-<p>style BUS fill:#6366F1,color:#fff,stroke:#4F46E5</p>
-<p>style GH fill:#10B981,color:#fff,stroke:#059669</p>
-<p>style FS fill:#10B981,color:#fff,stroke:#059669</p>
-<p>style SDLC fill:#10B981,color:#fff,stroke:#059669</p>
-
-<p></div></p>
-
-<p><strong>Legacy ASCII-диаграмма для справки:</strong></p>
-
-<p><pre><code class="">┌─────────────────────────────────────────────┐</p>
-<p>│           Слой оркестрации (оркестратор)         │</p>
-<p>│    A2A Client — делегирует, координирует     │</p>
-<p>├─────────────────────────────────────────────┤</p>
-<p>│         Слой коммуникации (A2A Bus)          │</p>
-<p>│    Task delegation, artifact handoff,         │</p>
-<p>│    contract validation                        │</p>
-<p>├──────┬──────┬──────┬──────┬─────────────────┤</p>
-<p>│backend-разработчик  │frontend-разработчик │DevOps-инженер  │QA-инженер │ ...             │</p>
-<p>│A2A   │A2A   │A2A   │A2A   │                 │</p>
-<p>│Remote│Remote│Remote│Remote│                 │</p>
-<p>│Agent │Agent │Agent │Agent │                 │</p>
-<p>├──────┴──────┴──────┴──────┴─────────────────┤</p>
-<p>│           Слой инструментов (MCP)            │</p>
-<p>│    GitHub MCP Server — issues, projects      │</p>
-<p>│    Filesystem MCP — файлы, репозиторий       │</p>
-<p>│    Custom MCP — SDLC gates, verify           │</p>
-<p>└─────────────────────────────────────────────┘</p>
-<p></code></pre></p>
-
-<p><h3>6.2 Роли</h3></p>
-
-<table>
-<thead><tr><th>Роль</th><th>Протокол</th><th>Описание</th></tr></thead>
-<tbody>
-<tr><td>менеджер (оркестратор)</td><td>A2A Client</td><td>Оркестратор: создаёт Tasks, делегирует агентам, проверяет артефакты</td></tr>
-<tr><td>backend-разработчик, frontend-разработчик, DevOps-инженер и др.</td><td>A2A Remote Agents</td><td>Исполнители: получают Tasks, выполняют, возвращают артефакты</td></tr>
-<tr><td>GitHub MCP Server</td><td>MCP</td><td>Доступ к issues, Projects V2, PR, Actions</td></tr>
-<tr><td>SDLC MCP Server (новый)</td><td>MCP</td><td>Gatekeeper, верификация, правила переходов</td></tr>
-</tbody></table>
-
-<p><h3>6.3 SDLC как A2A Task Flow</h3></p>
-
-<p>Каждый переход фазы SDLC — это A2A Task с обязательными полями:</p>
-
-<p><pre><code class="json">{</p>
-<p>"task_id": "sdlc-284-planning-to-design",</p>
-<p>"parent_task_id": "forge-284",</p>
-<p>"from_phase": "Planning",</p>
-<p>"to_phase": "Design",</p>
-<p>"agent_from": "marina",</p>
-<p>"agent_to": "boris",</p>
-<p>"artifacts": {</p>
-<p>"requirements_doc": "docs/specs/284-requirements.md",</p>
-<p>"acceptance_criteria": ["AC1: ...", "AC2: ..."],</p>
-<p>"assignee": "boris",</p>
-<p>"priority": "high"</p>
-<p>},</p>
-<p>"contract": {</p>
-<p>"required_fields": ["requirements_doc", "acceptance_criteria", "assignee", "priority"],</p>
-<p>"validated": true</p>
-<p>}</p>
-<p>}</p>
-<p></code></pre></p>
-
-<p><strong>Ключевое:</strong> если <code>contract.validated = false</code> — Task не отправляется, агент-from получает ошибку. Это и есть gatekeeper, только стандартизированный.</p>
-
-<p><h3>6.4 SDLC MCP Server (новый)</h3></p>
-
-<p>Кастомный MCP-сервер, который инкапсулирует правила документация процесса как MCP Tools:</p>
-
-<table>
-<thead><tr><th>Tool</th><th>Описание</th><th>Заменяет</th></tr></thead>
-<tbody>
-<tr><td><code>sdlc_validate_transition</code></td><td>Проверяет можно ли перейти из фазы A в фазу B</td><td>gatekeeper в CLI-скрипты управления бордом</td></tr>
-<tr><td><code>sdlc_check_artifact</code></td><td>Проверяет артефакт на соответствие AC</td><td>скрипт верификации</td></tr>
-<tr><td><code>sdlc_get_rules</code></td><td>Возвращает правила для фазы</td><td>grep по документация процесса</td></tr>
-<tr><td><code>sdlc_report</code></td><td>Генерирует отчёт по пайплайну</td><td>скрипты мониторинга --daily</td></tr>
-<tr><td><code>sdlc_check_sla</code></td><td>Проверяет SLA по приоритету</td><td>скрипт верификации --no-timeline</td></tr>
-</tbody></table>
-
-<p><strong>Преимущества над bash:</strong></p>
+<p><strong>Вывод:</strong> для формального SDLC с guards — LangGraph. Для коммуникации с человеком — OpenClaw. Для быстрого прототипа — CrewAI. Идеального варианта нет, приходится комбинировать.</p>
+<hr>
+<h2>5. Наш подход: SDLC как конечный автомат</h2>
+<p>Мы выбрали комбинацию State Machine + Orchestrator. Вот как это работает:</p>
+<h3>Переходы — детерминистические</h3>
+<pre><code>Backlog → Requirements → Design → Implementation → Review → QA → Deploy → Done
+   │         │            │          │             │       │      │
+   └──[gate]─┘──[gate]───┘──[gate]──┘──[gate]────┘──[gate]─┘──[gate]─→</code></pre>
+<p>Каждый переход — guard-функция, которая проверяет что артефакт существует:</p>
 <ul>
-<li>Типизированные параметры (JSON schema)</li>
+<li>Requirements → Design: есть документ с требованиями</li>
+<li>Design → Implementation: есть дизайн-документ</li>
+<li>Implementation → Review: есть открытый PR</li>
+<li>Review → QA: PR смержен</li>
+<li>QA → Deploy: вердикт ✅ от тестировщика</li>
+<li>Deploy → Done: задеплоено + QA подтверждено</li>
+</ul>
+<p>Guard — это код (<code>exit 0</code> / <code>exit 1</code>), не LLM. Ноль токенов, 100% воспроизводимость, невозможно обойти.</p>
+<h3>Исполнение — оркестратор + исполнители</h3>
+<p>Оркестратор (менеджер) получает задачу, определяет фазу, делегирует агенту с нужной ролью:</p>
 <ul>
-<li>Автодокументирование (tool descriptions)</li>
-<ul>
-<li>Тестируемость (MCP protocol = стандартный интерфейс)</li>
-<ul>
-<li>Расширяемость (новое правило = новый tool, не новый grep)</li>
-
-<p><h3>6.5 GitHub MCP Server (готовый)</h3></p>
-
-<p>Официальный сервер от GitHub. Toolset "Projects" (с октября 2025):</p>
-
-<table>
-<thead><tr><th>Tool</th><th>Заменяет</th></tr></thead>
-<tbody>
-<tr><td><code>list_projects</code></td><td>CLI-скрипты управления бордом</td></tr>
-<tr><td><code>get_project_fields</code></td><td>CLI-скрипты управления бордом (поля)</td></tr>
-<tr><td><code>get_project_items</code></td><td>CLI-скрипты управления бордом (items)</td></tr>
-<tr><td><code>add_project_item</code></td><td>CLI-скрипты управления бордом</td></tr>
-<tr><td><code>update_project_item</code></td><td>CLI-скрипты управления бордом</td></tr>
-<tr><td><code>create_issue</code></td><td><code>gh issue create</code></td></tr>
-<tr><td><code>update_issue</code></td><td><code>gh issue edit</code></td></tr>
-<tr><td><code>list_issues</code></td><td><code>gh issue list</code></td></tr>
-</tbody></table>
-
-<p><strong>Кэширование:</strong> MCP server управляет кэшированием сам. <code>локальный кэш</code> не нужен.</p>
-
-<p><h2>7. Сравнение: текущее vs предлагаемое</h2></p>
-
-<table>
-<thead><tr><th>Аспект</th><th>Сейчас (bash + gh)</th><th>Предложение (MCP + A2A)</th></tr></thead>
-<tbody>
-<tr><td>CRUD борда</td><td>CLI-скрипты управления бордом</td><td>GitHub MCP Server (Projects toolset)</td></tr>
-<tr><td>Gatekeeper</td><td>bash if/then в CLI-скрипты управления бордом</td><td>SDLC MCP Server → <code>sdlc_validate_transition</code></td></tr>
-<tr><td>Верификация</td><td>скрипт верификации (grep/python)</td><td>SDLC MCP Server → <code>sdlc_check_artifact</code></td></tr>
-<tr><td>Передача фаз</td><td>systemEvent + комментарий в issue</td><td>A2A Task с контрактами</td></tr>
-<tr><td>Кэш</td><td>локальный кэш</td><td>MCP server internal</td></tr>
-<tr><td>Контекст между агентами</td><td>Теряется</td><td>A2A Task history</td></tr>
-<tr><td>Token затраты</td><td>0 (bash)</td><td>~150K (MCP defs) или ~2K (code API)</td></tr>
-<tr><td>Зависимости</td><td>gh, python3, bash 3.2</td><td>Python/TS MCP SDK, A2A SDK</td></tr>
-</tbody></table>
-
-<p><h2>8. Риски и митигации</h2></p>
-
-<table>
-<thead><tr><th>Риск</th><th>Вероятность</th><th>Влияние</th><th>Митигация</th></tr></thead>
-<tbody>
-<tr><td>A2A SDK нестабилен</td><td>Средняя</td><td>Высокое</td><td>Начать с MCP-only, A2A добавить потом</td></tr>
-<tr><td>Token overhead MCP</td><td>Высокая</td><td>Среднее</td><td>Code API подход (2K токенов), не все tools</td></tr>
-<tr><td>GitHub MCP Server не покрывает все поля</td><td>Средняя</td><td>Среднее</td><td>Проверить coverage, дописать кастомный MCP tool</td></tr>
-<tr><td>OpenClaw не поддерживает MCP/A2A нативно</td><td>Высокая</td><td>Высокое</td><td>См. раздел 6</td></tr>
-<tr><td>Переходный период (два набора скриптов)</td><td>Высокая</td><td>Низкое</td><td>Поэтапная миграция: MCP сначала для CRUD, потом для gates</td></tr>
-</tbody></table>
-
-<p><h2>9. Интеграция с OpenClaw</h2></p>
-
-<p><strong>Критический вопрос:</strong> OpenClaw уже имеет систему спавна агентов (sessions_spawn), событий (systemEvent) и коммуникации (sessions_send). Нужен ли A2A поверх этого?</p>
-
-<p><strong>Вариант A: A2A нативно</strong> — Агенты общаются через A2A protocol, OpenClaw как transport. Требует A2A-сервер как отдельный процесс.</p>
-
-<p><strong>Вариант B: A2A-семантика на OpenClaw transport</strong> — Контракты и Agent Cards как A2A, но транспорт = OpenClaw sessions. Меньше инфраструктуры при той же формализации.</p>
-
-<p><strong>Вариант C: MCP-only сначала</strong> — Начать с GitHub MCP Server + SDLC MCP Server. Агенты через MCP работают с бордом, gatekeeper через MCP tools. A2A добавить позже когда понадобится агент-агент координация.</p>
-
-<p><strong>Рекомендация:</strong> Вариант C. MCP решает 80% проблемы (CRUD + gates). A2A добавляет агента-агент контракты — это следующий шаг, не первый.</p>
-
-<p><h2>10. Roadmap миграции</h2></p>
-
-<p><h3>Фаза 1: MCP для CRUD (2-3 дня)</h3></p>
-<ul>
-<li>[ ] Развернуть GitHub MCP Server (официальный, Docker)</li>
-<ul>
-<li>[ ] Протестировать Projects V2 toolset против борда Projects V2 board</li>
-<ul>
-<li>[ ] Проверить coverage: все ли поля мы можем читать/обновлять</li>
-<ul>
-<li>[ ] При достаточном coverage — перевести CRUD-операции на MCP</li>
-<ul>
-<li>[ ] Обновить мониторинг: читать борд через MCP</li>
-
-<p><h3>Фаза 2: SDLC MCP Server (3-5 дней)</h3></p>
-<ul>
-<li>[ ] Написать кастомный MCP Server (Python SDK)</li>
-<ul>
-<li>[ ] Правила процесса как MCP Tools</li>
-<ul>
-<li>[ ] Gatekeeper как <code>sdlc_validate_transition</code> tool</li>
-<ul>
-<li>[ ] Верификация как <code>sdlc_check_artifact</code> tool</li>
-<ul>
-<li>[ ] Написать тесты (MCP protocol test suite)</li>
-
-<p><h3>Фаза 3: A2A для контрактов (5-7 дней)</h3></p>
-<ul>
-<li>[ ] Определить Agent Cards</li>
-<ul>
-<li>[ ] Реализовать A2A Task delegation</li>
-<ul>
-<li>[ ] Контракты переходов фаз как обязательные поля Task</li>
-<ul>
-<li>[ ] Интеграция с OpenClaw sessions как transport</li>
-
-<p><h3>Фаза 4: AGP (по потребности)</h3></p>
-<ul>
-<li>[ ] Актуально при масштабировании (50+ агентов, межорганизационное взаимодействие)</li>
-<ul>
-<li>[ ] Пока не приоритет</li>
-
-<p><h2>11. Альтернативы</h2></p>
-
-<p>Если MCP + A2A слишком тяжёлые:</p>
-
+<li>Requirements → Борис (аналитик)</li>
+<li>Design → Вика (дизайнер)</li>
+<li>Implementation → Дима или Настя (разработчики)</li>
+<li>Review → Олег (Scrum Master, назначает ревьюера)</li>
+<li>QA → Артём (тестировщик)</li>
+<li>Deploy → Катя (девопс)</li>
+</ul>
+<p>Каждый исполнитель делает работу, верифицирует результат, возвращает оркестратору. Оркестратор проверяет guard и двигает задачу дальше.</p>
+<h3>Фантомный Done — больше не возможен</h3>
+<p>Задача не попадёт в Done без:</p>
 <ol>
-<li><strong>github-project-mcp</strong> (PyPI) — готовый MCP Server именно для GitHub Projects V2, без Docker</li>
-<ol>
-<li><strong>gh CLI MCP wrapper</strong> — обёртка над gh CLI как MCP Server (codingbutterbot/gh_cli_mcp)</li>
-<ol>
-<li><strong>OpenClaw native tools</strong> — остаться на текущей архитектуре, формализовать контракты в JSON-схемах без протоколов</li>
+<li>Смерженного PR (проверяется GitHub API)</li>
+<li>QA-вердикта ✅ (проверяется последним комментарием на issue)</li>
+<li>Факта деплоя (проверяется的健康-check endpoint)</li>
+</ol>
+<p>Всё — код, не промпты. LLM может ошибиться — guard нет.</p>
+<hr>
+<h2>6. Что мы узнали</h2>
+<h3>Процесс > промпты</h3>
+<p>Хороший промпт одному агенту — это 100 строк. Хороший процесс для пятнадцати — это 5 guard-функций и таблица ролей. Процесс воспроизводим, промпт — нет.</p>
+<h3>Не пиши свой HTTP</h3>
+<p>Bash-gatekeeper, самодельные верификаторы, собственный формат передачи контекста — это велосипед. MCP стандартизирует доступ к инструментам. A2A стандартизирует передачу задач. Используй их.</p>
+<h3>Guard — код, не LLM</h3>
+<p>Каждый раз когда LLM принимает решение о переходе между фазами — это риск. LLM может «забыть» проверить артефакт, может «поверить» что задача готова. Код — не забывает.</p>
+<h3>Делегирование = конкретная задача + верификатор</h3>
+<p>Абстрактная задача («напиши тесты») → агент блуждает, жжёт токены, таймаутится. Конкретная задача («проверь endpoint /api/health — curl вернёт 200, лог содержит JSON с level=info») → агент делает и верифицирует.</p>
+<h3>Один точечный запрос лучше одного широкого</h3>
+<p>«Проверь все 800 задач» = rate limit. «Проверь задачу #139» = один вызов API. Скрипт уже собрал данные — читай кэш, не ходи в API.</p>
+<hr>
+<h2>7. Что дальше</h2>
+<p>Мы описали подход для 15 агентов. Когда их станет 50 или 500 — понадобятся новые решения: AGP для межорганизационной маршрутизации, персистентные сессии вместо ephemeral, формальные контракты вместо ad-hoc делегирования.</p>
+<p>Но фундамент тот же: процесс из фаз, guards на переходах, артефакты как пропуск, код как верификатор. Это работает для 5 агентов, для 15, и будет работать для 500.</p>
+<hr>
+<p><em>Если вы строите мультиагентную команду и узнавали свои проблемы — <a href="https://veai.ru">напишите нам</a>. Мы как раз делаем инструменты для этого.</em></p>
 
-<p><h2>12. Решение</h2></p>
-
-<p>Архитектурное решение остаётся за командой проекта с учётом текущих приоритетов и available ресурсов.</p>
-
-<div class="footnote">
-<p><em>Архитектура агентов Veai на базе MCP + A2A</em> — версия 2.0, 09.06.2026</p>
-</div>
-
-<script>mermaid.initialize({ startOnLoad: true, theme: 'dark' });</script>
+<script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
 </body>
 </html>
